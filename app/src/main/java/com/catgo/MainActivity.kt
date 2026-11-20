@@ -18,6 +18,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 internal data class PairedDevice(val name: String, val address: String)
@@ -32,6 +36,15 @@ class MainActivity : ComponentActivity() {
     internal var message by mutableStateOf("")
     internal var serviceReady by mutableStateOf(false)
         private set
+    private val authorization by lazy { DeviceAuthorization(applicationContext) }
+    internal val deviceCredential get() = runCatching { authorization.credential }.getOrDefault("暂不可用")
+    internal var authorizationBusy by mutableStateOf(false)
+        private set
+    internal var activationMessage by mutableStateOf<String?>(null)
+        private set
+    internal var activationError by mutableStateOf("")
+        private set
+    private var pendingRemote: String? = null
     private var service: LocationService? = null
     private var bound = false
     private val bluetoothPermission: androidx.activity.result.ActivityResultLauncher<String> = registerForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
@@ -65,6 +78,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         bound = bindService(Intent(this, LocationService::class.java), connection, BIND_AUTO_CREATE)
         setContent { CatgoApp(this) }
+        lifecycleScope.launch {
+            if (prefs.getString("reported_device", null) == deviceCredential) return@launch
+            repeat(3) { attempt ->
+                if (attempt > 0) delay(attempt * 3000L)
+                try {
+                    authorization.sync(allowOffline = false)
+                    prefs.edit().putString("reported_device", deviceCredential).apply()
+                    return@launch
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // 连接 iPhone 时会再次尝试上报。
+                }
+            }
+        }
     }
 
     private fun hasBluetoothPermission() = Build.VERSION.SDK_INT < 31 ||
@@ -92,14 +120,79 @@ class MainActivity : ComponentActivity() {
         prefs.edit().putString("local", local).apply()
     }
 
+    internal fun connect(remote: String) {
+        if (authorizationBusy || pendingRemote != null) return
+        if (!operation { connectionAddress(remote) }) return
+        authorizationBusy = true
+        lifecycleScope.launch {
+            try {
+                val result = authorization.sync(allowOffline = true)
+                when (result.status) {
+                    "active" -> startConnection(remote)
+                    "expired" -> {
+                        pendingRemote = remote
+                        activationError = ""
+                        activationMessage = result.message
+                    }
+                    "disabled" -> message = result.message
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                message = error.message ?: "授权校验失败"
+            } finally {
+                authorizationBusy = false
+            }
+        }
+    }
+
+    internal fun confirmActivation(code: String) {
+        val remote = pendingRemote ?: return
+        if (authorizationBusy) return
+        activationError = ""
+        authorizationBusy = true
+        lifecycleScope.launch {
+            try {
+                val result = authorization.redeem(code)
+                if (result.status == "active") {
+                    closeActivation()
+                    startConnection(remote)
+                } else {
+                    activationError = result.message
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                activationError = error.message ?: "激活失败"
+            } finally {
+                authorizationBusy = false
+            }
+        }
+    }
+
+    internal fun cancelActivation() {
+        if (!authorizationBusy) closeActivation()
+    }
+
+    private fun closeActivation() {
+        pendingRemote = null
+        activationMessage = null
+        activationError = ""
+    }
+
     @SuppressLint("MissingPermission")
-    internal fun connect(remote: String) = operation {
+    private fun connectionAddress(remote: String): String {
         check(hasBluetoothPermission()) { "请先刷新设备并允许附近设备权限" }
         check(serviceReady && status["active"] != true) { "蓝牙服务暂不可用，请稍后重试" }
         val local = prefs.getString("local", "").orEmpty()
         Wire.mac(local)
         val adapter = getSystemService(BluetoothManager::class.java).adapter ?: error("此设备不支持蓝牙")
         check(adapter.isEnabled && adapter.bondedDevices.any { it.address == remote }) { "请先在系统蓝牙设置中配对 iPhone" }
+        return local
+    }
+
+    private fun startConnection(remote: String) = operation {
+        val local = connectionAddress(remote)
         startForegroundService(Intent(this, LocationService::class.java).setAction(LocationService.CONNECT)
             .putExtra("remote", remote).putExtra("local", local))
         prefs.edit().putString("remote", remote).apply()

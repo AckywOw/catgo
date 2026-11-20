@@ -14,7 +14,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.AnnotatedString
+import java.util.Locale
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +67,7 @@ internal fun CatgoApp(activity: MainActivity) {
         prepare = true
     }
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) dark else light) {
+        activity.activationMessage?.let { ActivationDialog(activity, it) }
         Scaffold(topBar = {
             TopAppBar(
                 title = { Text(if (page == home) "catgo" else page) },
@@ -259,7 +263,10 @@ private fun HomePage(
                 }
                 activity.devices.isEmpty() -> PrimaryAction("去蓝牙设置") { activity.bluetoothSettings() }
                 !hasLocalAddress -> PrimaryAction("填写蓝牙地址", onClick = settings)
-                else -> PrimaryAction("连接 iPhone", enabled = device != null && activity.serviceReady) {
+                else -> PrimaryAction(
+                    if (activity.authorizationBusy) "正在校验…" else "连接 iPhone",
+                    enabled = device != null && activity.serviceReady && !activity.authorizationBusy,
+                ) {
                     device?.let { activity.connect(it.address) }
                 }
             }
@@ -322,6 +329,43 @@ private fun CoordinateField(label: String, value: String, change: (String) -> Un
 }
 
 @Composable
+private fun ActivationDialog(activity: MainActivity, message: String) {
+    var code by remember { mutableStateOf("") }
+    val busy = activity.authorizationBusy
+    AlertDialog(
+        onDismissRequest = activity::cancelActivation,
+        title = { Text("设备激活") },
+        text = {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(message)
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { input ->
+                        code = input.uppercase(Locale.ROOT).filter { it in 'A'..'Z' || it in '0'..'9' }.take(12)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("12 位激活码") },
+                    singleLine = true,
+                    enabled = !busy,
+                )
+                ErrorText(activity.activationError)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { activity.confirmActivation(code) }, enabled = !busy && code.length == 12) {
+                Text("确认")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = activity::cancelActivation, enabled = !busy) { Text("取消") }
+        },
+    )
+}
+
+@Composable
 private fun SettingsPage(activity: MainActivity, local: String, onLocal: (String) -> Unit,
                          active: Boolean, navigate: (String) -> Unit) {
     var notice by rememberSaveable { mutableStateOf("") }
@@ -337,6 +381,15 @@ private fun SettingsPage(activity: MainActivity, local: String, onLocal: (String
             }, enabled = !active) { Text("保存地址") }
             OutlinedButton(onClick = { activity.deviceInfo() }) { Text("关于手机") }
         }
+    }
+    val clipboard = LocalClipboardManager.current
+    Section("本机唯一凭证") {
+        val credential = activity.deviceCredential
+        Text(credential)
+        TextButton(onClick = {
+            clipboard.setText(AnnotatedString(credential))
+            notice = "本机唯一凭证已复制"
+        }, enabled = credential.length == 64) { Text("复制凭证") }
     }
     if (notice.isNotBlank()) Text(notice)
     Section("应用") {
@@ -372,6 +425,8 @@ private fun SearchPage(activity: MainActivity, modifier: Modifier, center: Point
     }
     Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        AmapShareInput(accept)
+        HorizontalDivider()
         OutlinedTextField(query, { query = it.take(200) }, Modifier.fillMaxWidth(),
             label = { Text("地点或经纬度") }, singleLine = true,
             trailingIcon = { if (query.isNotBlank()) TextButton(onClick = { query = "" }) { Text("清除") } },
@@ -390,6 +445,54 @@ private fun SearchPage(activity: MainActivity, modifier: Modifier, center: Point
             }
             HorizontalDivider()
         }
+    }
+}
+
+@Composable
+private fun AmapShareInput(accept: (Point) -> Unit) {
+    var sharedText by rememberSaveable { mutableStateOf("") }
+    var resolved by remember { mutableStateOf<Place?>(null) }
+    var error by remember { mutableStateOf("") }
+    var resolving by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+
+    LaunchedEffect(sharedText) {
+        if (sharedText.isBlank()) return@LaunchedEffect
+        delay(450)
+        val result = withContext(Dispatchers.IO) { runCatching { AmapShare.resolve(sharedText) } }
+        resolved = result.getOrNull()
+        error = when (val failure = result.exceptionOrNull()) {
+            null -> ""
+            is java.io.IOException -> "无法打开高德地图分享链接，请检查网络后重试。"
+            is IllegalStateException -> failure.message.orEmpty()
+            else -> "无法解析高德地图分享链接。"
+        }
+        resolving = false
+    }
+
+    OutlinedTextField(sharedText, {
+        sharedText = it
+        resolved = null
+        error = ""
+        resolving = it.isNotBlank()
+    }, Modifier.fillMaxWidth(),
+        label = { Text("高德地图分享链接") },
+        placeholder = { Text("粘贴链接或完整分享文案") },
+        trailingIcon = {
+            if (sharedText.isNotEmpty()) TextButton(onClick = {
+                sharedText = ""
+                resolved = null
+                error = ""
+                resolving = false
+            }) { Text("清除") }
+        },
+        maxLines = 3)
+    if (resolving) LinearProgressIndicator(Modifier.fillMaxWidth())
+    ErrorText(error)
+    resolved?.let { place ->
+        Text(place.name, style = MaterialTheme.typography.titleMedium)
+        Text(String.format(Locale.US, "纬度 %.6f，经度 %.6f", place.point.lat, place.point.lon))
+        TextButton(onClick = { focus.clearFocus(); accept(place.point) }) { Text("填入首页") }
     }
 }
 
