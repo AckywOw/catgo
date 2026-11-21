@@ -1,38 +1,87 @@
-# catgo
+# CatGo
 
-以 Kotlin 和 Jetpack Compose 重写的独立安卓客户端，应用 ID 为 `com.catgo`。项目最低支持 Android 8.0（API 26），目标 SDK 为 API 36。项目沿用仓库根目录的 GPL-3.0 许可。
+CatGo 是一款运行在安卓手机上的 iPhone 虚拟定位工具。它通过蓝牙连接已配对的 iPhone，并通过 iAP2 协议发送你选定的位置。你可以搜索地点、手动输入经纬度，或从收藏中选取坐标。安装好 APK 后，只用两台手机就能操作。
 
-## 构建
+适合在自有设备上测试地图和定位功能。应用使用 Kotlin 和 Jetpack Compose 开发，应用 ID 为 `com.catgo`。
 
-安装 JDK 17、Android SDK 36 和 SDK Build Tools 35.0.0。设置 `JAVA_HOME` 和 `ANDROID_HOME`，准备下文所述的配件认证材料，再在本目录执行：
+## 下载与安装
 
-```sh
-./gradlew :app:assembleDebug :app:lintDebug
-```
+1. 准备一台 **Android 8.0 或更高版本**的安卓手机和一台 iPhone，两台手机都打开蓝牙。
+2. 在安卓手机上下载 [CatGo v1.0.0 的 catgo.apk](https://github.com/iiranlin/catgo/releases/download/v1.0.0/catgo.apk)，打开下载的文件并按提示安装。如果系统要求允许从当前浏览器或文件管理器安装应用，确认文件来自本仓库的 Releases 后再授权。
+3. 打开 CatGo。系统提示时，允许应用访问蓝牙或「附近设备」。如果想从通知栏断开连接，也可以允许通知。
 
-Gradle 输出 `app/build/outputs/apk/debug/app-debug.apk`，它使用本机调试证书签名。交付文件命名为 `catgo.apk`。
+GitHub 上的 [v1.0.0 发布版](https://github.com/iiranlin/catgo/releases/tag/v1.0.0)包含高德地图分享链接解析。
 
-## 连接
+如果安装正式版时提示签名冲突，并且手机之前装过调试版，请先记下需要保留的收藏，再卸载调试版并重新安装。卸载会清除本地设置和收藏。
 
-1. 在两台设备的系统蓝牙设置中配对，然后打开 catgo。
-2. 在设置保存安卓手机真实的本机蓝牙 MAC 地址。若系统允许，刷新已配对设备时也会读取并保存本机地址。
-3. 选择 iPhone 并连接。直接输入 WGS-84 经纬度，或从地点搜索和收藏填入坐标，然后点击“应用位置”。
+## 快速开始
 
-当前项目以新的应用 ID 安装，拥有独立的设置和收藏。地点搜索支持高德与 Photon。蓝牙会话依照 iPhone 发出的订阅周期发送定位数据，可通过首页或服务通知断开。
+### 1. 在系统设置里配对
 
-## 内置配件认证
+打开两台手机的系统蓝牙设置。在安卓手机上找到 iPhone，点设备名称，然后在两台手机上确认配对请求。回到 CatGo，点「刷新设备」，确认列表里出现你的 iPhone。
 
-请自行准备获准随 APK 分发的配件认证材料，并放入 `catgo/identity/`：
+### 2. 确认安卓手机的蓝牙地址
 
-- `certificate.p7b`：PKCS#7 证书。
-- `identity.pk8`：DER 格式的 P-256 PKCS#8 私钥。
+如果首页提示首次连接需要填写蓝牙地址，点右上角「设置」，在「安卓手机的真实蓝牙 MAC」里填入这台**安卓手机**的蓝牙地址，然后点「保存地址」。
 
-目录内的 `.gitignore` 随源码分发，材料文件由 Git 忽略。Gradle 默认从该目录读取这两个文件，放好后即可执行上面的构建命令。
+可以点旁边的「关于手机」，在系统的设备信息或状态信息中查找「蓝牙地址」。地址形如 `AA:BB:CC:DD:EE:FF`，请填你手机显示的实际值。部分手机允许 CatGo 在刷新设备时自动读取并保存地址。
 
-如需使用其他目录，可显式指定：
+### 3. 连接 iPhone 并应用位置
 
-```sh
-./gradlew :app:assembleDebug -PcatgoIdentityDir=/path/to/authorized-identity
-```
+1. 回到首页，在列表里选中你的 iPhone，点「连接 iPhone」，等待显示「已连接」。
+2. 点「搜索地点」，输入地点名，再点一条搜索结果。经纬度会自动填回首页。也可以手动输入 WGS-84 坐标，例如纬度 `31.2304`、经度 `121.4737`。
+3. 点「应用位置」。首页显示「正在持续发送」后，在 iPhone 上打开「地图」，点定位按钮查看蓝点是否移动到目标位置。
 
-应用直接读取安装包内的配件认证材料。构建时必须提供两份文件。APK 的持有者可读取随包分发的私钥。
+### 4. 收藏或结束
+
+- **收藏位置**：在首页展开「更多选项」，点「收藏当前坐标」，取一个容易辨认的名称并保存。下次点「收藏」即可重新填入该坐标。
+- **停止发送**：在首页或连接通知里点「断开连接」。iPhone 可能仍显示之前的位置，可以打开地图确认蓝点是否回到实际位置。
+
+## 常见问题
+
+| 遇到的问题 | 可以怎么做 |
+| --- | --- |
+| 列表里没有 iPhone | 确认两台手机已在系统蓝牙设置中配对，检查 CatGo 的蓝牙权限，再点「刷新设备」。 |
+| 提示填写蓝牙地址 | 在 CatGo 的「设置」里检查安卓手机的蓝牙 MAC 是否已正确保存。 |
+| 一直连不上或配件验证失败 | 打开「连接详情」查看卡在蓝牙、识别、认证还是订阅。自行构建时，检查证书和私钥是否配套。 |
+| 显示已应用，但地图蓝点没变 | 先看首页是否显示「正在持续发送」，再在 iPhone 地图中点定位按钮。iOS 可能仍采用其他定位来源，实际效果取决于设备和系统版本。 |
+| 搜不到地点 | 检查网络，试着输入城市名加地点全称，或直接在首页填写 WGS-84 经纬度。 |
+
+## 从源码构建
+
+已有 APK 的用户可以直接按上面的步骤安装。以下步骤适用于需要自行构建调试 APK 的开发者。
+
+1. 下载或克隆本仓库，用 Android Studio 打开项目根目录。
+2. 准备 JDK 17、Android SDK Platform 36 和 SDK Build Tools 35.0.0。通过 `ANDROID_HOME` 或 Android Studio 生成的 `local.properties` 指定 SDK 路径，并确保终端使用 JDK 17。
+3. 将获准随 APK 分发的 MFi 配件认证材料放入仓库根目录的 `identity/`。两个文件都必须存在且非空。
+
+   | 文件 | 格式 |
+   | --- | --- |
+   | `identity/identity.pk8` | DER 编码的 P-256 PKCS#8 私钥 |
+   | `identity/certificate.p7b` | PKCS#7 配件证书 |
+
+   材料文件已被 Git 忽略。构建时它们会被打包进 APK，拿到 APK 的人可能读出私钥，请使用明确获准随包分发的材料。
+
+4. 在仓库根目录执行构建和静态检查。
+
+   **macOS / Linux**
+
+   ```sh
+   ./gradlew :app:assembleDebug :app:lintDebug
+   ```
+
+   **Windows PowerShell**
+
+   ```powershell
+   .\gradlew.bat :app:assembleDebug :app:lintDebug
+   ```
+
+5. 构建完成后，将 `app/build/outputs/apk/debug/app-debug.apk` 传到安卓手机并安装。这个 APK 使用本机调试证书签名。
+
+如果认证材料放在其他目录，可在构建命令末尾加上 `"-PcatgoIdentityDir=/path/to/authorized-identity"`，并替换成实际路径。
+
+当前仓库暂无 GitHub Actions 构建工作流。可以在本地使用 Gradle Wrapper 执行上述命令。
+
+## 参考项目
+
+上游项目参考[iap2loc](https://github.com/D1ngtalk/iap2loc#源码构建与-ci)。
