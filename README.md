@@ -84,4 +84,7 @@ GitHub 上的 [v1.0.0 发布版](https://github.com/iiranlin/catgo/releases/tag/
 
 ## 参考项目
 
-上游项目参考[iap2loc](https://github.com/D1ngtalk/iap2loc#源码构建与-ci)。
+参考上游 PC 端 [iap2loc](https://github.com/D1ngtalk/iap2loc#源码构建与-ci)。
+
+## 社区与致谢
+感谢 [LINUX DO](https://linux.do) 社区提供开放、友善的技术交流平台。
