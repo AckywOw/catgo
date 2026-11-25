@@ -15,10 +15,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import java.util.Locale
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -36,7 +37,9 @@ private val dark = darkColorScheme(
     surface = Color(0xFF1C1B18), background = Color(0xFF1C1B18),
     onSurfaceVariant = Color(0xFFD0C7B8),
 )
-private val defaultPoint = Point(39.9042, 116.4074)
+private const val defaultLatitude = "37.334900"
+private const val defaultLongitude = "-122.009020"
+private const val placeConversion = "地点自动转换"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,8 +47,8 @@ internal fun CatgoApp(activity: MainActivity) {
     val prefs = activity.prefs
     var page by rememberSaveable { mutableStateOf("定位") }
     var selected by rememberSaveable { mutableStateOf(prefs.getString("remote", "").orEmpty()) }
-    var lat by rememberSaveable { mutableStateOf(prefs.getString("lat", "").orEmpty()) }
-    var lon by rememberSaveable { mutableStateOf(prefs.getString("lon", "").orEmpty()) }
+    var lat by rememberSaveable { mutableStateOf(prefs.getString("lat", null).orEmpty().ifBlank { defaultLatitude }) }
+    var lon by rememberSaveable { mutableStateOf(prefs.getString("lon", null).orEmpty().ifBlank { defaultLongitude }) }
     var alt by rememberSaveable { mutableStateOf(prefs.getString("altitude", "0").orEmpty()) }
     var local by rememberSaveable { mutableStateOf(prefs.getString("local", "").orEmpty()) }
     var favorites by remember { mutableStateOf(readFavorites(activity)) }
@@ -90,14 +93,18 @@ internal fun CatgoApp(activity: MainActivity) {
                         val point = runCatching { Point.parse(value) }.getOrNull()
                         if (point == null) lon = value else usePoint(point)
                     },
-                    { alt = it }, { page = "地点搜索" }, { page = "收藏" },
+                    { alt = it }, { page = placeConversion }, { page = "收藏" },
                     { point, name -> savePlaces(favorites + Place(name, "", point)) },
-                    { local = prefs.getString("local", "").orEmpty(); page = "设置" },
                 )
-                page == "地点搜索" -> SearchPage(activity, body, pointFromFields(lat, lon) ?: defaultPoint) {
-                    usePoint(it)
-                    page = home
-                }
+                page == placeConversion -> PlaceConversionPage(
+                    body,
+                    apply = ::usePoint,
+                    showHomeCoordinates = { point ->
+                        usePoint(point)
+                        page = home
+                    },
+                    saveFavorite = { place -> savePlaces(favorites + place) },
+                )
                 page == "收藏" -> FavoritesPage(body, favorites, ::savePlaces) {
                     usePoint(it)
                     page = home
@@ -110,7 +117,7 @@ internal fun CatgoApp(activity: MainActivity) {
                             "设置" -> SettingsPage(activity, local, { local = it }, active) { page = it }
                             "关于" -> {
                                 PageTitle("catgo")
-                                Text("版本 1.0.0 · Android ${android.os.Build.VERSION.RELEASE}")
+                                Text("版本 1.0.1 · Android ${android.os.Build.VERSION.RELEASE}")
                                 Text("通过蓝牙连接已配对的 iPhone，发送选定的 WGS-84 坐标。")
                             }
                         }
@@ -126,7 +133,7 @@ private fun HomePage(
     activity: MainActivity, modifier: Modifier, selected: String, select: (String) -> Unit,
     prepare: Boolean, showCoordinates: (Boolean) -> Unit, lat: String, lon: String, alt: String,
     changeLat: (String) -> Unit, changeLon: (String) -> Unit, changeAlt: (String) -> Unit,
-    search: () -> Unit, favorites: () -> Unit, saveFavorite: (Point, String) -> Unit, settings: () -> Unit,
+    convertPlace: () -> Unit, favorites: () -> Unit, saveFavorite: (Point, String) -> Unit,
 ) {
     val status = activity.status
     val active = status["active"] == true
@@ -134,8 +141,6 @@ private fun HomePage(
     val ready = phase in listOf("ready", "pending", "streaming")
     val connectedDevice = activity.devices.firstOrNull { it.address == status["remote"] }
     val device = activity.devices.firstOrNull { it.address == selected } ?: activity.devices.singleOrNull()
-    val hasLocalAddress = activity.prefs.getString("local", "").orEmpty()
-        .let { runCatching { Wire.mac(it) }.isSuccess }
     var more by rememberSaveable { mutableStateOf(false) }
     var details by rememberSaveable { mutableStateOf(false) }
     var attempted by rememberSaveable { mutableStateOf(false) }
@@ -183,6 +188,11 @@ private fun HomePage(
                         "subscribing" -> "等待 iPhone 请求位置…"
                         else -> "正在建立蓝牙连接…"
                     })
+                    if (phase == "subscribing") {
+                        Text("请关闭 iPhone 的蜂窝数据和 Wi-Fi，保持仅蓝牙连接。")
+                        Text("前往 iPhone「设置 → 隐私与安全性 → 定位服务」，关闭定位服务，等待 10 秒，再打开定位服务。打开任意地图应用验证，成功后即可恢复联网。")
+                        Text("如果一直未成功，请保持仅蓝牙连接，关闭定位服务后重启 iPhone，再打开定位服务并验证。")
+                    }
                 }
             }
 
@@ -207,7 +217,6 @@ private fun HomePage(
                     }
                     HorizontalDivider()
                 }
-                if (!hasLocalAddress) Text("首次连接需要填写这台安卓手机的蓝牙地址。")
             }
             if (!active) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -230,7 +239,7 @@ private fun HomePage(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = search) { Text("搜索地点") }
+                TextButton(onClick = convertPlace) { Text(placeConversion) }
                 TextButton(onClick = favorites) { Text("收藏") }
             }
             if (active) {
@@ -258,7 +267,6 @@ private fun HomePage(
                     }
                 }
                 activity.devices.isEmpty() -> PrimaryAction("去蓝牙设置") { activity.bluetoothSettings() }
-                !hasLocalAddress -> PrimaryAction("填写蓝牙地址", onClick = settings)
                 else -> PrimaryAction("连接 iPhone", enabled = device != null && activity.serviceReady) {
                     device?.let { activity.connect(it.address) }
                 }
@@ -326,8 +334,9 @@ private fun SettingsPage(activity: MainActivity, local: String, onLocal: (String
                          active: Boolean, navigate: (String) -> Unit) {
     var notice by rememberSaveable { mutableStateOf("") }
     Section("本机蓝牙地址") {
+        Text("可选。未填写时，首次连接会自动生成并保存一个地址。")
         OutlinedTextField(local, onLocal, Modifier.fillMaxWidth(), enabled = !active,
-            label = { Text("安卓手机的真实蓝牙 MAC") }, placeholder = { Text("AA:BB:CC:DD:EE:FF") }, singleLine = true)
+            label = { Text("蓝牙 MAC 地址") }, placeholder = { Text("AA:BB:CC:DD:EE:FF") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 if (activity.saveLocal(local)) {
@@ -346,49 +355,95 @@ private fun SettingsPage(activity: MainActivity, local: String, onLocal: (String
 }
 
 @Composable
-private fun SearchPage(activity: MainActivity, modifier: Modifier, center: Point, accept: (Point) -> Unit) {
-    val mapSettings = remember { runCatching { activity.mapSettings.read() } }
-    val settings = mapSettings.getOrDefault(mapOf("nearby" to true))
-    var query by rememberSaveable { mutableStateOf("") }
-    var results by remember { mutableStateOf(emptyList<Place>()) }
-    var searchError by remember { mutableStateOf("") }
-    var searching by remember { mutableStateOf(false) }
+private fun PlaceConversionPage(
+    modifier: Modifier,
+    apply: (Point) -> Unit,
+    showHomeCoordinates: (Point) -> Unit,
+    saveFavorite: (Place) -> Unit,
+) {
+    var sharedText by rememberSaveable { mutableStateOf("") }
+    var resolved by remember { mutableStateOf<Place?>(null) }
+    var favoriteName by remember { mutableStateOf("") }
+    var saved by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    var resolving by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
-    LaunchedEffect(query) {
-        results = emptyList()
-        searchError = ""
-        val text = query.trim()
-        searching = text.isNotEmpty()
-        if (text.isEmpty()) return@LaunchedEffect
-        delay(450)
-        val result = withContext(Dispatchers.IO) { runCatching { MapSearch.search(text, settings, center) } }
-        results = result.getOrDefault(emptyList())
-        searchError = when {
-            result.isFailure -> "搜索失败，请检查网络、搜索服务或坐标格式。"
-            results.isEmpty() -> "未找到匹配地点，试试地点全称或添加城市名。"
-            else -> ""
+    val scope = rememberCoroutineScope()
+
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Section("如何复制高德地图分享链接") {
+            Text("1. 打开高德地图，搜索地点。")
+            Text("2. 在地图上长按目标位置，点击底部「分享」，再点击「复制链接」。")
+            Text("3. 将链接粘贴到下方，点击「转换并应用」，经纬度会自动填入首页。")
         }
-        searching = false
-    }
-    Column(modifier.verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(query, { query = it.take(200) }, Modifier.fillMaxWidth(),
-            label = { Text("地点或经纬度") }, singleLine = true,
-            trailingIcon = { if (query.isNotBlank()) TextButton(onClick = { query = "" }) { Text("清除") } },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }))
-        if (query.isBlank()) Text("选择搜索结果后，经纬度会填入首页。")
-        if (searching) LinearProgressIndicator(Modifier.fillMaxWidth())
-        ErrorText(searchError)
-        for (place in results.take(8)) {
-            TextButton(onClick = { focus.clearFocus(); accept(place.point) },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(place.name, style = MaterialTheme.typography.titleMedium)
-                    if (place.address.isNotBlank()) Text(place.address, style = MaterialTheme.typography.bodyMedium)
+        OutlinedTextField(
+            sharedText, {
+                sharedText = it
+                resolved = null
+                error = ""
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !resolving,
+            label = { Text("高德地图分享链接") },
+            placeholder = { Text("粘贴链接或完整分享文案") },
+            maxLines = 3,
+        )
+        Button(
+            onClick = {
+                focus.clearFocus()
+                val input = sharedText
+                resolving = true
+                resolved = null
+                error = ""
+                scope.launch {
+                    try {
+                        val result = withContext(Dispatchers.IO) { runCatching { AmapShare.resolve(input) } }
+                        result.onSuccess { place ->
+                            apply(place.point)
+                            favoriteName = place.name
+                            saved = false
+                            resolved = place
+                        }.onFailure { failure ->
+                            error = when (failure) {
+                                is java.io.IOException -> "无法打开高德地图分享链接，请检查网络后重试。"
+                                is IllegalStateException -> failure.message.orEmpty()
+                                else -> "无法解析高德地图分享链接。"
+                            }
+                        }
+                    } finally {
+                        resolving = false
+                    }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = sharedText.isNotBlank() && !resolving,
+        ) { Text(if (resolving) "正在转换…" else "转换并应用") }
+        ErrorText(error)
+        resolved?.let { place ->
+            Section("转换成功，已填入首页经纬度") {
+                Text(String.format(Locale.US, "纬度 %.6f，经度 %.6f", place.point.lat, place.point.lon))
+                OutlinedTextField(
+                    favoriteName, { favoriteName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("收藏名称") },
+                    singleLine = true,
+                    enabled = !saved,
+                )
+                OutlinedButton(
+                    onClick = {
+                        focus.clearFocus()
+                        saveFavorite(place.copy(name = favoriteName.trim()))
+                        saved = true
+                    },
+                    enabled = favoriteName.isNotBlank() && !saved,
+                ) { Text(if (saved) "已收藏" else "收藏") }
+                TextButton(onClick = { showHomeCoordinates(place.point) }) {
+                    Text("查看首页坐标")
                 }
             }
-            HorizontalDivider()
         }
     }
 }
@@ -402,7 +457,7 @@ private fun FavoritesPage(
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (favorites.isEmpty()) {
             PageTitle("暂无收藏")
-            Text("在首页输入有效经纬度，然后在「更多选项」中收藏当前坐标。")
+            Text("转换高德分享链接后可直接收藏，也可以在首页「更多选项」中收藏当前坐标。")
         }
         favorites.forEachIndexed { index, place ->
             Row(verticalAlignment = Alignment.CenterVertically) {

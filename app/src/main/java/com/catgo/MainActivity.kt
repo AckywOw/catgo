@@ -19,12 +19,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.util.Locale
+import kotlin.random.Random
 
 internal data class PairedDevice(val name: String, val address: String)
 
 class MainActivity : ComponentActivity() {
     internal val prefs by lazy { getSharedPreferences("bluetooth_test", MODE_PRIVATE) }
-    internal val mapSettings by lazy { MapSearchSettings(this) }
     internal var status by mutableStateOf<Map<String, Any?>>(emptyMap())
         private set
     internal var devices by mutableStateOf<List<PairedDevice>>(emptyList())
@@ -70,7 +70,7 @@ class MainActivity : ComponentActivity() {
     private fun hasBluetoothPermission() = Build.VERSION.SDK_INT < 31 ||
         checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
-    @SuppressLint("MissingPermission", "HardwareIds")
+    @SuppressLint("MissingPermission")
     internal fun refreshDevices() = operation {
         if (!hasBluetoothPermission()) {
             bluetoothPermission.launch(Manifest.permission.BLUETOOTH_CONNECT)
@@ -80,9 +80,6 @@ class MainActivity : ComponentActivity() {
         val adapter = getSystemService(BluetoothManager::class.java).adapter ?: error("此设备不支持蓝牙")
         check(adapter.isEnabled) { "请先打开系统蓝牙" }
         devices = adapter.bondedDevices.map { PairedDevice(it.name ?: "未命名设备", it.address) }.sortedBy { it.name }
-        val local = runCatching { adapter.address }.getOrNull()
-        if (prefs.getString("local", "").isNullOrEmpty() && local != null &&
-            runCatching { Wire.mac(local) }.isSuccess) saveLocal(local)
     }
 
     internal fun saveLocal(value: String): Boolean = operation {
@@ -96,10 +93,22 @@ class MainActivity : ComponentActivity() {
     internal fun connect(remote: String) = operation {
         check(hasBluetoothPermission()) { "请先刷新设备并允许附近设备权限" }
         check(serviceReady && status["active"] != true) { "蓝牙服务暂不可用，请稍后重试" }
-        val local = prefs.getString("local", "").orEmpty()
-        Wire.mac(local)
         val adapter = getSystemService(BluetoothManager::class.java).adapter ?: error("此设备不支持蓝牙")
         check(adapter.isEnabled && adapter.bondedDevices.any { it.address == remote }) { "请先在系统蓝牙设置中配对 iPhone" }
+        val savedLocal = prefs.getString("local", "").orEmpty()
+        val local = if (runCatching { Wire.mac(savedLocal) }.isSuccess) {
+            savedLocal
+        } else {
+            val address = Random.nextBytes(6)
+            // Set the local bit and clear the multicast bit.
+            address[0] = ((address[0].toInt() and 0xFC) or 0x02).toByte()
+            if (address[0] == 2.toByte() && address.drop(1).all { it == 0.toByte() }) {
+                address[5] = 1
+            }
+            val generated = address.joinToString(":") { "%02X".format(it) }
+            prefs.edit().putString("local", generated).apply()
+            generated
+        }
         startForegroundService(Intent(this, LocationService::class.java).setAction(LocationService.CONNECT)
             .putExtra("remote", remote).putExtra("local", local))
         prefs.edit().putString("remote", remote).apply()
