@@ -1,8 +1,9 @@
 # CatGo
+没有安卓手机的用户可以查看[CatLoc仓库](https://github.com/iiranlin/CatLoc) 纯手机操作，需自行安装 IPA。
 
 CatGo 是一款运行在安卓手机上的 iPhone 虚拟定位工具。它通过蓝牙连接已配对的 iPhone，并通过 iAP2 协议发送你选定的位置。你可以转换高德地图分享链接、手动输入经纬度，或从收藏中选取坐标。安装好 APK 后，只用两台手机就能操作。
 
-适合在自有设备上测试地图和定位功能。应用使用 Kotlin 和 Jetpack Compose 开发，应用 ID 为 `com.catgo`。
+适合在自有设备上测试地图和定位功能。应用使用 Kotlin 和 Jetpack Compose 开发。
 
 ## 下载与安装
 
